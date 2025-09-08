@@ -32,7 +32,9 @@ ui <-
       width  = 350
       , style = 'padding-top:1px;'
       , h3(strong('Inputs'))
-      , tags$p('Use slider. Or type value & click ⟳ to update.'
+      , tags$p('Use slider. Or type value & click ⟳ to update.
+               Solid lines in output graphs use all specified inputs;
+               dotted line are for no intervention comparison.'
                , style = 'font-size:80%')
       
       ## I0
@@ -447,6 +449,21 @@ server <- function(input, output, session) {
      |> mutate(across(where(is.numeric), ~ round(.x, 5)))
     )
   })
+  out_ddnovax <- reactive({
+    (simulate_epidemic(in_I0 = I0_val()
+                       , in_beta = beta_val()
+                       , in_durinf = durinf_val()
+                       , in_indwaning = input$in_indwaning
+                       , in_durimm = durimm_val()
+                       , in_indbirth = input$in_indbirth
+                       , in_durlife = durlife_val()
+                       , in_indvax = 0
+                       , in_vaxstart = 0
+                       , in_vaxp = 0)
+     |> mutate(time.years = time/365.25)
+     |> mutate(across(where(is.numeric), ~ round(.x, 5)))
+    )
+  })
   
   ## RO
   
@@ -461,16 +478,22 @@ server <- function(input, output, session) {
   plot_i <- reactive({
     
     dd_long <- (out_dd() 
+                |> mutate(scenario = 'Input')
+                |> bind_rows(out_ddnovax() |> mutate(scenario = 'NoVax'))
                 |> filter(time < input$in_maxtime*365.25)
     )
     
     maxI <- dd_long |> pull(I) |> max()
     
     (ggplot(data = dd_long
-            , mapping = aes(x= time.years, y = I))
+            , mapping = aes(x= time.years, y = I, linetype = scenario, linewidth = scenario))
       + labs(x = 'Time (years)', y = 'Number infected (I)')
-      + geom_line(lwd = 2.5, col = '#CD2626', alpha = 0.8)
+      + geom_line(col = '#CD2626', alpha = 0.8)
       + scale_y_continuous(limits = c(0,maxI*1.08)) 
+      + scale_linetype_manual(values = c('Input' = 'solid', 'NoVax' = 'dotted'))
+      + scale_linewidth_manual(values = c("Input" = 2.5, "NoVax" = 1.5)) 
+      + guides(linetype = 'none'
+               , linewidth = 'none')
       + theme_minimal(base_size = in_basetext)
     )
     
@@ -483,6 +506,8 @@ server <- function(input, output, session) {
     if (input$in_indbirth==TRUE) {
       
       dd_long <- (out_dd() 
+                  |> mutate(scenario = 'Input')
+                  |> bind_rows(out_ddnovax() |> mutate(scenario = 'NoVax')) 
                   |> filter(time < input$in_maxtime*365.25)
                   |> mutate(reff = S/in_N*beta_val()*(1/durinf_val()+1/(durlife_val()*365.25))^(-1))
       )
@@ -490,6 +515,8 @@ server <- function(input, output, session) {
     } else { 
       
       dd_long <- (out_dd() 
+                  |> mutate(scenario = 'Input')
+                  |> bind_rows(out_ddnovax() |> mutate(scenario = 'NoVax'))
                   |> filter(time < input$in_maxtime*365.25)
                   |> mutate(reff = S/in_N*beta_val()*durinf_val())
       )
@@ -505,16 +532,17 @@ server <- function(input, output, session) {
     
     dd_long <- (dd_long
                 |> mutate(reffScaled = reff/maxReff*maxI*1.05)
-                |> select(time.years, I, reffScaled)
+                |> select(time.years, I, reffScaled, scenario)
                 |> pivot_longer(cols = c(I, reffScaled)
                                 , values_to = 'value'
                                 , names_to = 'metric')
     )
     
     (ggplot(data = dd_long
-            , mapping = aes(x= time.years, y = value, colour = metric))
+            , mapping = aes(x= time.years, y = value, colour = metric
+                            , linetype = scenario, linewidth = scenario))
       + labs(x = 'Time (years)')
-      + geom_line(lwd = 2.5, alpha = 0.8)
+      + geom_line(alpha = 0.8)
       + geom_hline(yintercept = 1/maxReff*maxI*1.05, col = 'grey60', lty = 2, lwd = 2)
       + scale_y_continuous(name = 'Number infected (I)'
                            , limits = c(0,maxI*1.08)
@@ -524,6 +552,12 @@ server <- function(input, output, session) {
                             , values = c(reffScaled = 'black', I = '#CD2626'))
       + annotate('text', x = maxt*0.90, y = 1/maxReff*maxI*1.05, label = "R_eff = 1",
                  color = "grey50", vjust = -0.5, size = 5)
+      + scale_linetype_manual(values = c('Input' = 'solid', 'NoVax' = 'dotted'))
+      + scale_linewidth_manual(values = c("Input" = 2.5, "NoVax" = 1.5)) 
+      + guides(linetype = 'none'
+               , linewidth = 'none'
+               , colour = guide_legend(override.aes = list(linewidth= 2.5))
+      )
       + theme_minimal(base_size = in_basetext)
       + theme(legend.position = 'top'
               , legend.text = element_text(size = in_basetext-1))
@@ -535,7 +569,9 @@ server <- function(input, output, session) {
   
   plot_allstates <- reactive({
     
-    dd_long <- (out_dd()
+    dd_long <- (out_dd() 
+                |> mutate(scenario = 'Input')
+                |> bind_rows(out_ddnovax() |> mutate(scenario = 'NoVax')) 
                 |> select(-cV, -cI)
                 |> filter(time < input$in_maxtime*365.25)
                 |> pivot_longer(cols = c(S,I,R,V)
@@ -545,13 +581,20 @@ server <- function(input, output, session) {
     )
     
     (ggplot(data = dd_long
-            , mapping = aes(x= time.years, y = count, colour = compartment))
+            , mapping = aes(x= time.years, y = count, colour = compartment
+                            , linetype = scenario, linewidth = scenario))
       + labs(x = 'Time (years)', y = 'Population count')
-      + geom_line(lwd = 2.5, alpha = 0.7)
+      + geom_line(alpha = 0.7)
+      + scale_y_continuous(limits = c(0,in_N*1.01)) 
       + scale_colour_manual(name = NULL
                             , values = c(S = '#4682B4', I = '#CD2626', R = '#FF8C00', V = '#CDAD00')
       )
-      + scale_y_continuous(limits = c(0,in_N*1.01)) 
+      + scale_linetype_manual(values = c('Input' = 'solid', 'NoVax' = 'dotted'))
+      + scale_linewidth_manual(values = c("Input" = 2.5, "NoVax" = 1.5)) 
+      + guides(linetype = 'none'
+               , linewidth = 'none'
+               , colour = guide_legend(override.aes = list(linewidth= 2.5))
+      )
       + theme_minimal(base_size = in_basetext)
       + theme(legend.position = 'top'
               , legend.text = element_text(size = in_basetext-1))
@@ -563,16 +606,24 @@ server <- function(input, output, session) {
   
   plot_prev <- reactive({
     
-    dd_long <- (out_dd()
+    dd_long <- (out_dd() 
+                |> mutate(scenario = 'Input')
+                |> bind_rows(out_ddnovax() |> mutate(scenario = 'NoVax'))
                 |> filter(time < input$in_maxtime*365.25)
                 |> mutate(prev = I/in_N*100)
-                |> select(time.years, prev)
+                |> select(time.years, prev, scenario)
     )
     
     (ggplot(data = dd_long
-            , mapping = aes(x= time.years, y = prev))
+            , mapping = aes(x= time.years, y = prev
+                            , linetype = scenario, linewidth = scenario))
       + labs(x = 'Time (years)', y = 'Prevalence (I/N), as a %')
-      + geom_line(lwd = 2.5, alpha = 0.6, colour = 'magenta')
+      + geom_line(alpha = 0.6, colour = 'magenta')
+      + scale_linetype_manual(values = c('Input' = 'solid', 'NoVax' = 'dotted'))
+      + scale_linewidth_manual(values = c("Input" = 2.5, "NoVax" = 1.5)) 
+      + guides(linetype = 'none'
+               , linewidth = 'none'
+      )
       + theme_minimal(base_size = in_basetext)
     )
     
@@ -582,11 +633,13 @@ server <- function(input, output, session) {
   
   plot_inc <- reactive({
     
-    dd_long <- (out_dd()
+    dd_long <- (out_dd() 
+                |> mutate(scenario = 'Input')
+                |> bind_rows(out_ddnovax() |> mutate(scenario = 'NoVax'))
                 |> filter(time < input$in_maxtime*365.25)
                 |> mutate(inc = beta_val()*S*I/in_N
                           , cuminc = cI)
-                |> select(time.years, inc, cuminc)
+                |> select(time.years, inc, cuminc, scenario)
     )
     
     maxCumInc <- dd_long |> pull(cuminc) |> max()
@@ -594,7 +647,7 @@ server <- function(input, output, session) {
     
     dd_long <- (dd_long
                 |> mutate(cumincScaled = cuminc/maxCumInc*maxInc*1.10)
-                |> select(time.years, inc, cumincScaled)
+                |> select(-cuminc)
                 |> pivot_longer(cols = c(inc, cumincScaled)
                                 , values_to = 'value'
                                 , names_to = 'metric')
@@ -602,15 +655,22 @@ server <- function(input, output, session) {
     )
     
     (ggplot(data = dd_long
-            , mapping = aes(x= time.years, y = value, colour = metric))
+            , mapping = aes(x= time.years, y = value, colour = metric
+                            , linetype = scenario, linewidth = scenario))
       + labs(x = 'Time (years)')
-      + geom_line(lwd = 2.5, alpha = 0.7)
+      + geom_line(alpha = 0.7)
       + scale_y_continuous(name = 'Incidence (new cases per day)'
                            , limits = c(0,maxInc*1.14)
                            , sec.axis = sec_axis(~.*maxCumInc/maxInc/1.10, name='Cumulative number of infections'))
       + scale_colour_manual(name = NULL
                             , labels = c('Incidence\n(left axis)', 'Cumulative infections\n(right axis)')
                             , values = c(inc = 'blue3', cumincScaled = 'cyan4'))
+      + scale_linetype_manual(values = c('Input' = 'solid', 'NoVax' = 'dotted'))
+      + scale_linewidth_manual(values = c("Input" = 2.5, "NoVax" = 1.5)) 
+      + guides(linetype = 'none'
+               , linewidth = 'none'
+               , colour = guide_legend(override.aes = list(linewidth= 2.5))
+      )
       + theme_minimal(base_size = in_basetext)
       + theme(legend.position = 'top'
               , legend.text = element_text(size = in_basetext-1))
@@ -622,16 +682,20 @@ server <- function(input, output, session) {
   
   plot_vax <- reactive({
     
-    dd_long <- (out_dd()
+    dd_long <- (out_dd() 
+                |> mutate(scenario = 'Input')
+                |> bind_rows(out_ddnovax() |> mutate(scenario = 'NoVax')) 
                 |> filter(time < input$in_maxtime*365.25)
-                |> mutate(vax = input$in_indvax
-                          * input$in_indbirth
-                          * (time > vaxstart_val()*365.25)
-                          * vaxp_val()/100
-                          * 1/(durlife_val()*365.25)
-                          * in_N
+                |> mutate(vax = ifelse(scenario == 'Input'
+                                       , input$in_indvax
+                                       * input$in_indbirth
+                                       * (time > vaxstart_val()*365.25)
+                                       * vaxp_val()/100
+                                       * 1/(durlife_val()*365.25)
+                                       * in_N
+                                       , 0)
                           , cumvax = cV)
-                |> select(time.years, vax, cumvax)
+                |> select(time.years, vax, cumvax, scenario)
     )
     
     maxCumVax <- dd_long |> pull(cumvax) |> max()
@@ -639,7 +703,7 @@ server <- function(input, output, session) {
     
     dd_long <- (dd_long
                 |> mutate(cumvaxScaled = cumvax/maxCumVax*maxVax*1.30)
-                |> select(time.years, vax, cumvaxScaled)
+                |> select(-cumvax)
                 |> pivot_longer(cols = c(vax, cumvaxScaled)
                                 , values_to = 'value'
                                 , names_to = 'metric')
@@ -647,15 +711,22 @@ server <- function(input, output, session) {
     )
     
     (ggplot(data = dd_long
-            , mapping = aes(x= time.years, y = value, colour = metric))
+            , mapping = aes(x= time.years, y = value, colour = metric
+                            , linetype = scenario, linewidth = scenario))
       + labs(x = 'Time (years)')
-      + geom_line(lwd = 2.5, alpha = 0.7)
+      + geom_line(alpha = 0.7)
       + scale_y_continuous(name = 'Vaccinations per day'
                            , limits = c(0,maxVax*1.40)
                            , sec.axis = sec_axis(~.*maxCumVax/maxVax/1.30, name='Cumulative number of vaccinations'))
       + scale_colour_manual(name = NULL
                             , labels = c('Vaccines per day\n(left axis)', 'Cumulative vaccination\n(right axis)')
                             , values = c(vax = 'blue3', cumvaxScaled = 'cyan4'))
+      + scale_linetype_manual(values = c('Input' = 'solid', 'NoVax' = 'dotted'))
+      + scale_linewidth_manual(values = c("Input" = 2.5, "NoVax" = 1.5)) 
+      + guides(linetype = 'none'
+               , linewidth = 'none'
+               , colour = guide_legend(override.aes = list(linewidth= 2.5))
+      )
       + theme_minimal(base_size = in_basetext)
       + theme(legend.position = 'top'
               , legend.text = element_text(size = in_basetext-1))
@@ -667,7 +738,9 @@ server <- function(input, output, session) {
   
   plot_allstates_20y <- reactive({
     
-    dd_long <- (out_dd()
+    dd_long <- (out_dd() 
+                |> mutate(scenario = 'Input')
+                |> bind_rows(out_ddnovax() |> mutate(scenario = 'NoVax')) 
                 |> select(-cV, -cI)
                 |> pivot_longer(cols = c(S,I,R,V)
                                 , values_to = 'count'
@@ -676,13 +749,20 @@ server <- function(input, output, session) {
     )
     
     (ggplot(data = dd_long
-            , mapping = aes(x= time.years, y = count, colour = compartment))
+            , mapping = aes(x= time.years, y = count, colour = compartment
+                            , linetype = scenario, linewidth = scenario))
       + labs(x = 'Time (years)', y = 'Population count')
-      + geom_line(lwd = 2.5, alpha = 0.7)      
+      + geom_line(alpha = 0.7)      
+      + scale_y_continuous(limits = c(0,in_N*1.01))
       + scale_colour_manual(name = NULL
                             , values = c(S = '#4682B4', I = '#CD2626', R = '#FF8C00', V = '#CDAD00')
       )
-      + scale_y_continuous(limits = c(0,in_N*1.01))
+      + scale_linetype_manual(values = c('Input' = 'solid', 'NoVax' = 'dotted'))
+      + scale_linewidth_manual(values = c("Input" = 2.5, "NoVax" = 1.5)) 
+      + guides(linetype = 'none'
+               , linewidth = 'none'
+               , colour = guide_legend(override.aes = list(linewidth= 2.5))
+      )
       + theme_minimal(base_size = in_basetext)
       + theme(legend.position = 'top'
               , legend.text = element_text(size = in_basetext-1))
