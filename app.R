@@ -1,8 +1,8 @@
 
 
-# Reshma Kassanjee. Last updated 20 August 2025
+# Reshma Kassanjee. Last updated 8 September 2025
 # Infectious disease modelling
-# SIRS with demography
+# SIRS with demography and vaccination at birth
 # Learning tool for University of Cape Town Master of Public Health program
 
 
@@ -20,7 +20,7 @@ source('fns.R')
 ui <- 
   page_sidebar( 
     
-    title = h1(strong('SIRS with demography'))
+    title = h1(strong('SIRS with demography and vaccination'))
     
     #
     #
@@ -112,6 +112,38 @@ ui <-
         , cellWidths = c('35%', '25%', '40%')
       )
       
+      ## vaccination indicator
+      
+      , checkboxInput('in_indvax'
+                      , 'Include vaccine intervention'
+                      , value = FALSE)
+      
+      ## time of vaccine start
+      
+      , sliderInput('in_vaxstart',
+                    label = strong('Time to vaccine rollout (years)')
+                    , min = inmin_vaxstart, max = inmax_vaxstart, step = instep_vaxstart, value = indefault_vaxstart)
+      , splitLayout(
+        numericInput('inplusnum_vaxstart', NULL, value = indefault_vaxstart, min = inmin_vaxstart, max = inmax_vaxstart, width = '100%')
+        , actionButton('update_vaxstart', '⟳',
+                       style = 'padding:2px 6px; font-size:80%; margin-top:3px;')
+        , span(textOutput('error_vaxstart'), style='color:red; font-size:70%;')
+        , cellWidths = c('35%', '25%', '40%')
+      )
+      
+      ## vaccine coverage
+      
+      , sliderInput('in_vaxp',
+                    label = strong('Vaccine coverage (%)')
+                    , min = inmin_vaxp, max = inmax_vaxp, step = instep_vaxp, value = indefault_vaxp)
+      , splitLayout(
+        numericInput('inplusnum_vaxp', NULL, value = indefault_vaxp, min = inmin_vaxp, max = inmax_vaxp, width = '100%')
+        , actionButton('update_vaxp', '⟳',
+                       style = 'padding:2px 6px; font-size:80%; margin-top:3px;')
+        , span(textOutput('error_vaxp'), style='color:red; font-size:70%;')
+        , cellWidths = c('35%', '25%', '40%')
+      )
+      
       # time scale for plotting
       
       , sliderInput('in_maxtime'
@@ -133,26 +165,40 @@ ui <-
       , nav_panel('Full collection'
                   , div(style = 'overflow-y: auto; height: 80vh; padding: 1em;'
                         , layout_columns(
-                          col_widths = c(6,6,6,6,2,10)
+                          col_widths = c(6,6,6,6,6,6,4,8)
                           
                           , card(card_header('Infected')
-                                 , plotOutput('plot_i'))
+                                 , plotOutput('plot_i')
+                          )
                           
                           , card(card_header('Infected & effective reproductive number')
-                                 , plotOutput('plot_ireff_a'))
+                                 , plotOutput('plot_ireff_a')
+                          )
                           
                           , card(card_header('Population counts')
-                                 , plotOutput('plot_allstates_a'))
+                                 , plotOutput('plot_allstates_a')
+                          )
                           
-                          , card(card_header('Prevalence and incidence')
-                                 , plotOutput('plot_incprev_a'))
+                          , card(card_header('Prevalence')
+                                 , plotOutput('plot_prev_a')
+                          )
+                          
+                          , card(card_header('Incidence')
+                                 , plotOutput('plot_inc_a')
+                          )
+                          
+                          , card(card_header('Vaccination')
+                                 , plotOutput('plot_vax_a')
+                          )
                           
                           , card(card_header('Summary measures')
-                                 , textOutput('calcr0')
-                                 , tableOutput('tabinfections'))
+                                 # , textOutput('calcr0')
+                                 , tableOutput('tabinfections')
+                          )
                           
                           , card(card_header('Population counts for 20 years')
-                                 , plotOutput('plot_allstates_20y'))
+                                 , plotOutput('plot_allstates_20y')
+                          )
                           
                         ) # layout_columns(
                   ) # div(style =
@@ -176,18 +222,36 @@ ui <-
                   )
       ) # PANEL 3
       
-      ## PANEL 4 (fluid): Prevalence and incidence
+      ## PANEL 4 (fluid): Prevalence
       
-      , nav_panel('Prevalence and incidence'
+      , nav_panel('Prevalence'
                   , card(
                     full_screen = TRUE
-                    , plotOutput('plot_incprev_b', fill = TRUE)
+                    , plotOutput('plot_prev_b', fill = TRUE)
                   )
       ) # PANEL 4
       
+      ## PANEL 5 (fluid): Incidence
+      
+      , nav_panel('Incidence'
+                  , card(
+                    full_screen = TRUE
+                    , plotOutput('plot_inc_b', fill = TRUE)
+                  )
+      ) # PANEL 5
+      
+      ## PANEL 6 (fluid): Vaccination
+      
+      , nav_panel('Vaccination'
+                  , card(
+                    full_screen = TRUE
+                    , plotOutput('plot_vax_b', fill = TRUE)
+                  )
+      ) # PANEL 6
+      
     ) # END NAVIGATION PANELS 
     
-    , tags$p('Reshma Kassanjee. Last updated Aug 2025. Some rights reserved. CC BY-NC 4.0'
+    , tags$p('Reshma Kassanjee. Last updated Sept 2025. Some rights reserved. CC BY-NC 4.0'
              , style = 'font-size:80%')
     
     #
@@ -317,6 +381,50 @@ server <- function(input, output, session) {
     }
   })
   
+  ## SYNC INPUT: vaccine start
+  
+  # Reactive value to hold current
+  vaxstart_val <- reactiveVal(indefault_vaxstart)
+  # Slider moves → update reactive and numeric box
+  observeEvent(input$in_vaxstart, {
+    vaxstart_val(input$in_vaxstart)
+    updateNumericInput(session, 'inplusnum_vaxstart', value = input$in_vaxstart)
+    output$error_vaxstart <- renderText('')   # clear error
+  })
+  # Numeric input + Update button → update slider if valid
+  observeEvent(input$update_vaxstart, {
+    val <- input$inplusnum_vaxstart
+    if (!is.null(val) && !is.na(val) && val >= inmin_vaxstart && val <= inmax_vaxstart) {
+      vaxstart_val(val)
+      updateSliderInput(session, 'in_vaxstart', value = val)
+      output$error_vaxstart <- renderText('')   # clear error
+    } else {
+      output$error_vaxstart <- renderText('0-20\n(steps:0.5)')  # small inline error
+    }
+  })
+  
+  ## SYNC INPUT: vaccine coverage
+  
+  # Reactive value to hold current
+  vaxp_val <- reactiveVal(indefault_vaxp)
+  # Slider moves → update reactive and numeric box
+  observeEvent(input$in_vaxp, {
+    vaxp_val(input$in_vaxp)
+    updateNumericInput(session, 'inplusnum_vaxp', value = input$in_vaxp)
+    output$error_vaxp <- renderText('')   # clear error
+  })
+  # Numeric input + Update button → update slider if valid
+  observeEvent(input$update_vaxp, {
+    val <- input$inplusnum_vaxp
+    if (!is.null(val) && !is.na(val) && val >= inmin_vaxp && val <= inmax_vaxp) {
+      vaxp_val(val)
+      updateSliderInput(session, 'in_vaxp', value = val)
+      output$error_vaxp <- renderText('')   # clear error
+    } else {
+      output$error_vaxp <- renderText('0-100\n(steps:1)')  # small inline error
+    }
+  })
+  
   #
   #
   
@@ -325,14 +433,18 @@ server <- function(input, output, session) {
   ## SIMULATE EPIDEMIC
   
   out_dd <- reactive({
-    (simulate_epidemic(I0_val()
-                       , beta_val()
-                       , durinf_val()
-                       , input$in_indwaning
-                       , durimm_val()
-                       , input$in_indbirth
-                       , durlife_val())
+    (simulate_epidemic(in_I0 = I0_val()
+                       , in_beta = beta_val()
+                       , in_durinf = durinf_val()
+                       , in_indwaning = input$in_indwaning
+                       , in_durimm = durimm_val()
+                       , in_indbirth = input$in_indbirth
+                       , in_durlife = durlife_val()
+                       , in_indvax = input$in_indvax
+                       , in_vaxstart = vaxstart_val()
+                       , in_vaxp = vaxp_val())
      |> mutate(time.years = time/365.25)
+     |> mutate(across(where(is.numeric), ~ round(.x, 5)))
     )
   })
   
@@ -411,7 +523,7 @@ server <- function(input, output, session) {
                             , labels = c('Infected\n(left axis)', 'Effective reproductive number\n(right axis)')
                             , values = c(reffScaled = 'black', I = '#CD2626'))
       + annotate('text', x = maxt*0.90, y = 1/maxReff*maxI*1.05, label = "R_eff = 1",
-                  color = "grey50", vjust = -0.5, size = 5)
+                 color = "grey50", vjust = -0.5, size = 5)
       + theme_minimal(base_size = in_basetext)
       + theme(legend.position = 'top'
               , legend.text = element_text(size = in_basetext-1))
@@ -424,20 +536,20 @@ server <- function(input, output, session) {
   plot_allstates <- reactive({
     
     dd_long <- (out_dd()
-                |> select(-infections)
+                |> select(-cV, -cI)
                 |> filter(time < input$in_maxtime*365.25)
-                |> pivot_longer(cols = c(S,I,R)
+                |> pivot_longer(cols = c(S,I,R,V)
                                 , values_to = 'count'
                                 , names_to = 'compartment')
-                |> mutate(compartment = factor(compartment, levels = c('S','I','R'))) 
+                |> mutate(compartment = factor(compartment, levels = c('S','I','R','V'))) 
     )
     
     (ggplot(data = dd_long
             , mapping = aes(x= time.years, y = count, colour = compartment))
       + labs(x = 'Time (years)', y = 'Population count')
-      + geom_line(lwd = 2.5, alpha = 0.8)
+      + geom_line(lwd = 2.5, alpha = 0.7)
       + scale_colour_manual(name = NULL
-                            , values = c(S = '#4682B4', I = '#CD2626', R = '#FF8C00')
+                            , values = c(S = '#4682B4', I = '#CD2626', R = '#FF8C00', V = '#CDAD00')
       )
       + scale_y_continuous(limits = c(0,in_N*1.01)) 
       + theme_minimal(base_size = in_basetext)
@@ -447,41 +559,103 @@ server <- function(input, output, session) {
     
   })
   
-  ## PLOT INCIDENCE AND PREVALENCE
+  ## PLOT PREVALENCE
   
-  plot_incprev <- reactive({
+  plot_prev <- reactive({
     
     dd_long <- (out_dd()
                 |> filter(time < input$in_maxtime*365.25)
-                |> mutate(prev = I/in_N*100
-                          , inc = beta_val()*S*I/in_N)
-    )
-    
-    maxInc <- dd_long |> pull(inc) |> max()
-    if (maxInc < 0.5){
-      maxInc <- 0.5
-    }
-    maxPrev <- dd_long |> pull(prev) |> max()
-    
-    dd_long <- (dd_long
-                |> mutate(incScaled = inc/maxInc*maxPrev*0.8)
-                |> select(time.years, incScaled, prev)
-                |> pivot_longer(cols = c(incScaled,prev)
-                                , values_to = 'value'
-                                , names_to = 'measure')
-                |> mutate(measure = factor(measure, levels = c('prev','incScaled'))) 
+                |> mutate(prev = I/in_N*100)
+                |> select(time.years, prev)
     )
     
     (ggplot(data = dd_long
-            , mapping = aes(x= time.years, y = value, colour = measure))
+            , mapping = aes(x= time.years, y = prev))
+      + labs(x = 'Time (years)', y = 'Prevalence (I/N), as a %')
+      + geom_line(lwd = 2.5, alpha = 0.6, colour = 'magenta')
+      + theme_minimal(base_size = in_basetext)
+    )
+    
+  })
+  
+  ## PLOT INCIDENCE
+  
+  plot_inc <- reactive({
+    
+    dd_long <- (out_dd()
+                |> filter(time < input$in_maxtime*365.25)
+                |> mutate(inc = beta_val()*S*I/in_N
+                          , cuminc = cI)
+                |> select(time.years, inc, cuminc)
+    )
+    
+    maxCumInc <- dd_long |> pull(cuminc) |> max()
+    maxInc <- dd_long |> pull(inc) |> max()
+    
+    dd_long <- (dd_long
+                |> mutate(cumincScaled = cuminc/maxCumInc*maxInc*1.10)
+                |> select(time.years, inc, cumincScaled)
+                |> pivot_longer(cols = c(inc, cumincScaled)
+                                , values_to = 'value'
+                                , names_to = 'metric')
+                |> mutate(metric = factor(metric, levels = c('inc','cumincScaled'))) 
+    )
+    
+    (ggplot(data = dd_long
+            , mapping = aes(x= time.years, y = value, colour = metric))
       + labs(x = 'Time (years)')
-      + geom_line(lwd = 2.5, alpha = 0.6)
+      + geom_line(lwd = 2.5, alpha = 0.7)
+      + scale_y_continuous(name = 'Incidence (new cases per day)'
+                           , limits = c(0,maxInc*1.14)
+                           , sec.axis = sec_axis(~.*maxCumInc/maxInc/1.10, name='Cumulative number of infections'))
       + scale_colour_manual(name = NULL
-                            , values = c(prev = 'magenta', incScaled = 'blue3')
-                            , labels = c('Prevalence\n(left axis)', 'Incidence\n(right axis)'))
-      + scale_y_continuous(name = 'Prevalence (I/N), as a %'
-                           , limits = c(0,maxPrev*1.05)
-                           , sec.axis = sec_axis(~.*maxInc/maxPrev/0.8, name='Incidence (new cases per day)'))
+                            , labels = c('Incidence\n(left axis)', 'Cumulative infections\n(right axis)')
+                            , values = c(inc = 'blue3', cumincScaled = 'cyan4'))
+      + theme_minimal(base_size = in_basetext)
+      + theme(legend.position = 'top'
+              , legend.text = element_text(size = in_basetext-1))
+    )
+    
+  })
+  
+  ## PLOT VACCINATION
+  
+  plot_vax <- reactive({
+    
+    dd_long <- (out_dd()
+                |> filter(time < input$in_maxtime*365.25)
+                |> mutate(vax = input$in_indvax
+                          * input$in_indbirth
+                          * (time > vaxstart_val()*365.25)
+                          * vaxp_val()/100
+                          * 1/(durlife_val()*365.25)
+                          * in_N
+                          , cumvax = cV)
+                |> select(time.years, vax, cumvax)
+    )
+    
+    maxCumVax <- dd_long |> pull(cumvax) |> max()
+    maxVax <- dd_long |> pull(vax) |> max()
+    
+    dd_long <- (dd_long
+                |> mutate(cumvaxScaled = cumvax/maxCumVax*maxVax*1.30)
+                |> select(time.years, vax, cumvaxScaled)
+                |> pivot_longer(cols = c(vax, cumvaxScaled)
+                                , values_to = 'value'
+                                , names_to = 'metric')
+                |> mutate(metric = factor(metric, levels = c('vax','cumvaxScaled'))) 
+    )
+    
+    (ggplot(data = dd_long
+            , mapping = aes(x= time.years, y = value, colour = metric))
+      + labs(x = 'Time (years)')
+      + geom_line(lwd = 2.5, alpha = 0.7)
+      + scale_y_continuous(name = 'Vaccinations per day'
+                           , limits = c(0,maxVax*1.40)
+                           , sec.axis = sec_axis(~.*maxCumVax/maxVax/1.30, name='Cumulative number of vaccinations'))
+      + scale_colour_manual(name = NULL
+                            , labels = c('Vaccines per day\n(left axis)', 'Cumulative vaccination\n(right axis)')
+                            , values = c(vax = 'blue3', cumvaxScaled = 'cyan4'))
       + theme_minimal(base_size = in_basetext)
       + theme(legend.position = 'top'
               , legend.text = element_text(size = in_basetext-1))
@@ -494,19 +668,19 @@ server <- function(input, output, session) {
   plot_allstates_20y <- reactive({
     
     dd_long <- (out_dd()
-                |> select(-infections)
-                |> pivot_longer(cols = c(S,I,R)
+                |> select(-cV, -cI)
+                |> pivot_longer(cols = c(S,I,R,V)
                                 , values_to = 'count'
                                 , names_to = 'compartment')
-                |> mutate(compartment = factor(compartment, levels = c('S','I','R'))) 
+                |> mutate(compartment = factor(compartment, levels = c('S','I','R','V'))) 
     )
     
     (ggplot(data = dd_long
             , mapping = aes(x= time.years, y = count, colour = compartment))
       + labs(x = 'Time (years)', y = 'Population count')
-      + geom_line(lwd = 2.5, alpha = 0.8)      
+      + geom_line(lwd = 2.5, alpha = 0.7)      
       + scale_colour_manual(name = NULL
-                            , values = c(S = '#4682B4', I = '#CD2626', R = '#FF8C00')
+                            , values = c(S = '#4682B4', I = '#CD2626', R = '#FF8C00', V = '#CDAD00')
       )
       + scale_y_continuous(limits = c(0,in_N*1.01))
       + theme_minimal(base_size = in_basetext)
@@ -524,16 +698,18 @@ server <- function(input, output, session) {
   
   output$tabinfections <- renderTable({
     (out_dd() 
-    |> mutate(
-      time.5yr  = cumsum(time > 365.25*5) == 1
-      , time.10yr = cumsum(time > 365.25*10) == 1
-      , time.20yr = time == 365.25*20
-    )
-    |> filter(time.5yr | time.10yr | time.20yr)
-    |> transmute(
-      'Time (years)'       = format(round(time.years, 0), nsmall = 0)
-      , 'Total infections' = format(round(infections, 0), nsmall = 0)
-    ))
+     |> mutate(
+       time.5yr  = cumsum(time > 365.25*5) == 1
+       , time.10yr = cumsum(time > 365.25*10) == 1
+       , time.15yr = cumsum(time > 365.25*15) == 1
+       , time.20yr = time == 365.25*20
+     )
+     |> filter(time.5yr | time.10yr | time.15yr | time.20yr)
+     |> transmute(
+       'Time (years)'       = format(round(time.years, 0), nsmall = 0)
+       , 'Total infections' = format(round(cI, 0), nsmall = 0)
+       , 'Total vaccinated' = format(round(cV, 0), nsmall = 0)
+     ))
   })
   
   #
@@ -547,8 +723,12 @@ server <- function(input, output, session) {
   output$plot_i <- renderPlot({ plot_i() })
   output$plot_ireff_a <- renderPlot({ plot_ireff() })
   output$plot_ireff_b <- renderPlot({ plot_ireff() })
-  output$plot_incprev_a <- renderPlot({ plot_incprev() })
-  output$plot_incprev_b <- renderPlot({ plot_incprev() })
+  output$plot_prev_a <- renderPlot({ plot_prev() })
+  output$plot_prev_b <- renderPlot({ plot_prev() })
+  output$plot_inc_a <- renderPlot({ plot_inc() })
+  output$plot_inc_b <- renderPlot({ plot_inc() })
+  output$plot_vax_a <- renderPlot({ plot_vax() })
+  output$plot_vax_b <- renderPlot({ plot_vax() })
   
 }
 
