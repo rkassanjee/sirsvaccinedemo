@@ -1,5 +1,9 @@
 
+# R project files
+
 *.RProj
 .Rproj.user
+
+# R history
 
 *.Rhistory
