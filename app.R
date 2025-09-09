@@ -149,7 +149,7 @@ ui <-
       # time scale for plotting
       
       , sliderInput('in_maxtime'
-                    , label = 'Maximum time for y-axis (years)'
+                    , label = 'Maximum time for x-axis (years)'
                     , min = 0.5, max = 20, step = 0.5, value = 5)
       
     ) # SIDERBAR end
